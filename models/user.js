@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { version } = require('os');
 
 
 const UserSchema = new mongoose.Schema(
@@ -34,6 +35,7 @@ const UserSchema = new mongoose.Schema(
 
         gender: {
             type: String,
+            enum: ['male', 'female', 'Other'],
             required: [true, 'Select']
         },
 
@@ -81,11 +83,17 @@ const UserSchema = new mongoose.Schema(
         // session management ....
         selectedRole: {
             type: String,
-            enum: ['user', 'customer'],
+            enum: ['driver', 'customer', null],
             default: null
         },
+        isTemporary: {
+            type: Boolean,
+            default: false
+        }
 
     },
+
+    
     {
         timestamps: true,
         //toJSON: {virtuals: true},
@@ -143,5 +151,28 @@ UserSchema.methods.generateSessionToken = function (){
     return sessionToken;
 }; 
 
+
+// get welome Screen options
+UserSchema.statics.getWelcomeScreenOptions = function() {
+    return {
+        AppName: 'Ride App',
+        version: '1.0.0',
+        message: 'Welcome to Ride App! select how you want to sign up.',
+        options: [
+            {
+                id: 'driver',
+                title: 'SignUp as Driver',
+                description: 'Start earning by offering rides',
+                icon: '🚗' 
+            },
+            {
+                id: 'customer',
+                title: 'SignUp as Customer',
+                description: 'Book rides anytime, anywhere',
+                icon: '👤'
+            }
+        ]
+    };
+};
 
 module.exports = mongoose.model('User', UserSchema);

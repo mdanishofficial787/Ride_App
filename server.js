@@ -41,8 +41,12 @@ if (process.env.NODE_ENV === 'development') {
 //app.use(helmet());
 
 
-// Test route
+// mount api routes
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/drivers', require('./routes/driverRoutes'));
+
+// serve upload files statically
+app.use('/uploads', express.static('uploads'));
 
 
 //test
@@ -62,6 +66,7 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
 
 // Error handling for undefined routes
 app.use((req, res, next) => {
