@@ -2,23 +2,48 @@ const express = require('express');
 const {
     createDriverProfile,
     getDriverProfile,
-    updateDriverProfile,
-    deleteDriverProfile
+    getVerificationStatus,
+    getDocumentStatus,
+    deleteDriverProfile,
+    updateLocation,
+    getCurrentLocation,
+    toggleAvailability,
+    findNearbyDrivers
 } = require('../controllers/driverController');
 
 const { protect } = require('../middleware/auth');
-const { uploadDriverImages, handleUploadError } = require('../middleware/upload');
+const { uploadAllDriverDocuments, handleUploadError } = require('../middleware/upload');
 
 const router = express.Router();
+const { 
+    requireApprovedDriver, 
+    requireDriverProfile,
+    logDriverActivity 
+} = require('../middleware/driverAuth');
+// All routes require authentication
+router.use(protect);
 
-// all routes require authentication
-//router.use(protect);
-
-// driver profile routes
+// Driver profile routes
 router.route('/profile')
-    .post(uploadDriverImages, handleUploadError, createDriverProfile)
+    .post(uploadAllDriverDocuments, handleUploadError, createDriverProfile)
     .get(getDriverProfile)
-    .put(uploadDriverImages, handleUploadError, updateDriverProfile)
     .delete(deleteDriverProfile);
+
+// Document status route
+router.get('/profile/document-status', getDocumentStatus);
+
+// Verification status route
+router.get('/profile/verification-status', getVerificationStatus);
+
+//location routes
+router.route('/location')
+    .put(updateLocation)
+    .get(getCurrentLocation);
+
+//availability route
+router.put('/availability',requireApprovedDriver, logDriverActivity('TOGGLE_AVAILABILITY'), toggleAvailability);
+
+//nearby drivers route
+router.post('/nearby', findNearbyDrivers);
 
 module.exports = router;

@@ -4,6 +4,13 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const morgan = require('morgan');
 
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:19006',
+    process.env.FRONTEND_URL  // Your frontend URL (added later)
+].filter(Boolean);
+
 //const mongoSanitize = require('express-mongo-sanitize');
 //const helmet = require('helmet');
 //const rateLimit = require('express-rate-limit');
@@ -21,7 +28,21 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Enable CORS
-app.use(cors());
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, Postman)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        
+        return callback(new Error('Not allowed by CORS'));
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+}));
 
 // Connect to database
 connectDB();
@@ -44,6 +65,7 @@ if (process.env.NODE_ENV === 'development') {
 // mount api routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/drivers', require('./routes/driverRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 // serve upload files statically
 app.use('/uploads', express.static('uploads'));
@@ -93,7 +115,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
 
