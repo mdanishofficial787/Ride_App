@@ -1,5 +1,5 @@
 const Driver = require('../models/Driver');
-const User = require('../models/User');
+const User = require('../models/user');
 
 
 // Get All Pending Drivers
