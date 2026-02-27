@@ -1,257 +1,159 @@
 const Driver = require('../models/Driver');
-const User = require('../models/User');
-const fs = require('fs');
-const { deleteUploadedFiles } = require('../middleware/upload');
+const User = require('../models/user');
+const { uploadMultipleToCloudinary } = require('../utils/cloudinaryUpload');
+const { validateCNIC, validateVehicleType, validateCoordinates } = require('../utils/validators');
+const { errorResponse, successResponse, getStatusMessage, getNextSteps, calculateDistance } = require('../utils/helpers');
 
 
-// Create Driver Profile with All Documents
+//     Create Driver Profile
 // @route   POST /api/drivers/profile
 
 exports.createDriverProfile = async (req, res) => {
     try {
-        const {
-            cnic,
-            vehicleType,
-            vehicleLicenseNumber,
-            vehicleRegistrationNumber
-        } = req.body;
-
-        // 1. CHECK IF USER IS A DRIVER
-       
+        const { cnic, vehicleType, vehicleLicenseNumber, vehicleRegistrationNumber } = req.body;
 
         const user = await User.findById(req.user.id);
 
         if (!user) {
-            deleteUploadedFiles(req.files);
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
+            return res.status(404).json(errorResponse('User not found'));
         }
 
         if (user.userType !== 'driver') {
-            deleteUploadedFiles(req.files);
-            return res.status(403).json({
-                success: false,
-                message: 'Only drivers can create driver profiles'
-            });
+            return res.status(403).json(errorResponse('Only drivers can create driver profiles'));
         }
-
-      
-        // 2. CHECK IF PROFILE ALREADY EXISTS
-    
 
         const existingProfile = await Driver.findOne({ user: req.user.id });
 
         if (existingProfile) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'Driver profile already exists. Please update instead.',
+            return res.status(400).json(errorResponse('Driver profile already exists. Please update instead.', null, {
                 profileId: existingProfile._id,
                 profileStatus: existingProfile.profileStatus
-            });
+            }));
         }
 
-    
-        // 3. VALIDATE REQUIRED FIELDS
- 
-
+        // Validate fields
         const missingFields = {};
-
-        // Text fields
         if (!cnic) missingFields.cnic = true;
         if (!vehicleType) missingFields.vehicleType = true;
         if (!vehicleLicenseNumber) missingFields.vehicleLicenseNumber = true;
         if (!vehicleRegistrationNumber) missingFields.vehicleRegistrationNumber = true;
 
-        // Personal documents
-        if (!req.files?.driverImage) missingFields.driverImage = true;
-        if (!req.files?.cnicFront) missingFields.cnicFront = true;
-        if (!req.files?.cnicBack) missingFields.cnicBack = true;
-        if (!req.files?.drivingLicenseFront) missingFields.drivingLicenseFront = true;
-        if (!req.files?.drivingLicenseBack) missingFields.drivingLicenseBack = true;
-
-        // Vehicle documents
-        if (!req.files?.registrationDocument) missingFields.registrationDocument = true;
-        if (!req.files?.vehicleFrontImage) missingFields.vehicleFrontImage = true;
-        if (!req.files?.vehicleBackImage) missingFields.vehicleBackImage = true;
-        if (!req.files?.vehicleLeftImage) missingFields.vehicleLeftImage = true;
-        if (!req.files?.vehicleRightImage) missingFields.vehicleRightImage = true;
+        const requiredFiles = ['driverImage', 'cnicFront', 'cnicBack', 'drivingLicenseFront', 'drivingLicenseBack',
+                               'registrationDocument', 'vehicleFrontImage', 'vehicleBackImage', 'vehicleLeftImage', 'vehicleRightImage'];
+        
+        requiredFiles.forEach(field => {
+            if (!req.files?.[field]) missingFields[field] = true;
+        });
 
         if (Object.keys(missingFields).length > 0) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide all required fields and documents',
-                missingFields: missingFields,
-                requiredDocuments: {
-                    personal: ['driverImage', 'cnicFront', 'cnicBack', 'drivingLicenseFront', 'drivingLicenseBack'],
-                    vehicle: ['registrationDocument', 'vehicleFrontImage', 'vehicleBackImage', 'vehicleLeftImage', 'vehicleRightImage']
-                }
-            });
+            return res.status(400).json(errorResponse('Please provide all required fields and documents', null, { missingFields }));
         }
 
-        
-        // 4. VALIDATE CNIC FORMAT
-       
-
-        const cnicRegex = /^[0-9]{13}$/;
-        if (!cnicRegex.test(cnic)) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'CNIC must be exactly 13 digits',
-                field: 'cnic'
-            });
+        if (!validateCNIC(cnic)) {
+            return res.status(400).json(errorResponse('CNIC must be exactly 13 digits', 'cnic'));
         }
 
-       
-        // CHECK DUPLICATES
-       
-
+        // Check duplicates
         const existingCNIC = await Driver.findOne({ cnic });
         if (existingCNIC) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'This CNIC is already registered',
-                field: 'cnic'
-            });
+            return res.status(400).json(errorResponse('This CNIC is already registered', 'cnic'));
         }
 
         const existingLicense = await Driver.findOne({ vehicleLicenseNumber: vehicleLicenseNumber.toUpperCase() });
         if (existingLicense) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'This vehicle license number is already registered',
-                field: 'vehicleLicenseNumber'
-            });
+            return res.status(400).json(errorResponse('This vehicle license number is already registered', 'vehicleLicenseNumber'));
         }
 
         const existingRegistration = await Driver.findOne({ vehicleRegistrationNumber: vehicleRegistrationNumber.toUpperCase() });
         if (existingRegistration) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'This vehicle registration number is already registered',
-                field: 'vehicleRegistrationNumber'
-            });
+            return res.status(400).json(errorResponse('This vehicle registration number is already registered', 'vehicleRegistrationNumber'));
         }
 
-       
-        //  VALIDATE VEHICLE TYPE
-        
-
-        const validVehicleTypes = ['car', 'bike', 'rickshaw', 'van'];
-        if (!validVehicleTypes.includes(vehicleType)) {
-            deleteUploadedFiles(req.files);
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid vehicle type. Choose from: car, bike, rickshaw, van',
-                field: 'vehicleType'
-            });
+        if (!validateVehicleType(vehicleType)) {
+            return res.status(400).json(errorResponse('Invalid vehicle type. Choose from: car, bike, rickshaw, van', 'vehicleType'));
         }
 
-        
-        // 7. CREATE DRIVER PROFILE
-        
+        // Upload to Cloudinary
+        console.log('📤 Uploading images to Cloudinary...');
+        let uploadedUrls;
+        try {
+            uploadedUrls = await uploadMultipleToCloudinary(req.files);
+            console.log(' All images uploaded to Cloudinary');
+        } catch (error) {
+            console.error(' Cloudinary upload error:', error);
+            return res.status(500).json(errorResponse('Failed to upload images. Please try again.', null, { error: error.message }));
+        }
 
+        // Create profile
         const driverProfile = await Driver.create({
             user: req.user.id,
             cnic,
             documents: {
-                driverImage: req.files.driverImage[0].path,
-                cnicFront: req.files.cnicFront[0].path,
-                cnicBack: req.files.cnicBack[0].path,
-                drivingLicenseFront: req.files.drivingLicenseFront[0].path,
-                drivingLicenseBack: req.files.drivingLicenseBack[0].path
+                driverImage: uploadedUrls.driverImage,
+                cnicFront: uploadedUrls.cnicFront,
+                cnicBack: uploadedUrls.cnicBack,
+                drivingLicenseFront: uploadedUrls.drivingLicenseFront,
+                drivingLicenseBack: uploadedUrls.drivingLicenseBack
             },
             vehicleType,
             vehicleLicenseNumber: vehicleLicenseNumber.toUpperCase(),
             vehicleRegistrationNumber: vehicleRegistrationNumber.toUpperCase(),
             vehicleDocuments: {
-                registrationDocument: req.files.registrationDocument[0].path,
-                vehicleFrontImage: req.files.vehicleFrontImage[0].path,
-                vehicleBackImage: req.files.vehicleBackImage[0].path,
-                vehicleLeftImage: req.files.vehicleLeftImage[0].path,
-                vehicleRightImage: req.files.vehicleRightImage[0].path
+                registrationDocument: uploadedUrls.registrationDocument,
+                vehicleFrontImage: uploadedUrls.vehicleFrontImage,
+                vehicleBackImage: uploadedUrls.vehicleBackImage,
+                vehicleLeftImage: uploadedUrls.vehicleLeftImage,
+                vehicleRightImage: uploadedUrls.vehicleRightImage
             },
-            profileStatus: 'pending',// All documents uploaded, now pending verification
+            profileStatus: 'complete',
             verificationStatus: 'pending',
             canAcceptRides: false
         });
 
-        //initial status to history
         driverProfile.addStatusHistory('pending', req.user.id);
         await driverProfile.save();
-
         await driverProfile.populate('user', 'fullname email mobile');
 
-        res.status(200).json({
-            success: true,
-            message: 'Driver profile created successfully!',
-            data: {
-                profileId: driverProfile._id,
-                user: {
-                    userId: driverProfile.user._id,
-                    fullname: driverProfile.user.fullname,
-                    email: driverProfile.user.email,
-                    mobile: driverProfile.user.mobile
-                },
-                personalInfo: {
-                    cnic: driverProfile.cnic
-                },
-                personalDocuments: {
-                    driverImage: driverProfile.documents.driverImage,
-                    cnicFront: driverProfile.documents.cnicFront,
-                    cnicBack: driverProfile.documents.cnicBack,
-                    drivingLicenseFront: driverProfile.documents.drivingLicenseFront,
-                    drivingLicenseBack: driverProfile.documents.drivingLicenseBack
-                },
-                vehicleInfo: {
-                    vehicleType: driverProfile.vehicleType,
-                    vehicleLicenseNumber: driverProfile.vehicleLicenseNumber,
-                    vehicleRegistrationNumber: driverProfile.vehicleRegistrationNumber
-                },
-                vehicleDocuments: {
-                    registrationDocument: driverProfile.vehicleDocuments.registrationDocument,
-                    vehicleFrontImage: driverProfile.vehicleDocuments.vehicleFrontImage,
-                    vehicleBackImage: driverProfile.vehicleDocuments.vehicleBackImage,
-                    vehicleLeftImage: driverProfile.vehicleDocuments.vehicleLeftImage,
-                    vehicleRightImage: driverProfile.vehicleDocuments.vehicleRightImage
-                },
-                verificationStatus: {
-                    status: driverProfile.verificationStatus,
-                    canAcceptRides: driverProfile.canAcceptRides,
-                    message: 'Your profile is pending admin verification. You will be notified once verified.'
-                },
-                profileStatus: driverProfile.profileStatus,
-                createdAt: driverProfile.createdAt,
-                documentSummary: {
-                    TotalDocumentsRequired: 10,
-                    totalDocumentsUploaded: 10,
-                    allDocumentsUploaded: true
-                }
+        res.status(201).json(successResponse('Driver profile created successfully! All documents uploaded to cloud. Your profile is pending admin verification.', {
+            profileId: driverProfile._id,
+            user: {
+                userId: driverProfile.user._id,
+                fullname: driverProfile.user.fullname,
+                email: driverProfile.user.email,
+                mobile: driverProfile.user.mobile
+            },
+            personalInfo: { cnic: driverProfile.cnic },
+            personalDocuments: driverProfile.documents,
+            vehicleInfo: {
+                vehicleType: driverProfile.vehicleType,
+                vehicleLicenseNumber: driverProfile.vehicleLicenseNumber,
+                vehicleRegistrationNumber: driverProfile.vehicleRegistrationNumber
+            },
+            vehicleDocuments: driverProfile.vehicleDocuments,
+            verificationStatus: {
+                status: driverProfile.verificationStatus,
+                canAcceptRides: driverProfile.canAcceptRides,
+                message: 'Your profile is under review. You will be notified once verified.'
+            },
+            profileStatus: driverProfile.profileStatus,
+            createdAt: driverProfile.createdAt,
+            documentSummary: {
+                totalDocumentsRequired: 10,
+                totalDocumentsUploaded: 10,
+                allDocumentsUploaded: true,
+                storedOn: 'Cloudinary'
             }
-        });
+        }));
 
     } catch (error) {
         console.error('Create driver profile error:', error);
-        deleteUploadedFiles(req.files);
-
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
-//   Get Driver Profile
-// @route   GET /api/drivers/profile
 
+//   Get Driver Profile
+// route   GET /api/drivers/profile
 
 exports.getDriverProfile = async (req, res) => {
     try {
@@ -260,280 +162,156 @@ exports.getDriverProfile = async (req, res) => {
             .populate('verifiedBy', 'fullname email');
 
         if (!driverProfile) {
-            return res.status(404).json({
-                success: false,
-                message: 'Driver profile not found. Please create your profile first.'
-            });
+            return res.status(404).json(errorResponse('Driver profile not found. Please create your profile first.'));
         }
 
-        // Check document upload status
         const documentStatus = driverProfile.areAllDocumentsUploaded();
 
-        res.status(200).json({
-            success: true,
-            data: {
-                ...driverProfile.toObject(),
-                documentUploadStatus: documentStatus,
-                verificationInfo: {
-                    status: driverProfile.verificationStatus,
-                    canAcceptRides: driverProfile.canAcceptRides,
-                    verifiedAt: driverProfile.verifiedAt,
-                    verifiedBy: driverProfile.verifiedBy ? {
-                        name: driverProfile.verifiedBy.fullname,
-                        email: driverProfile.verifiedBy.email
-                    }: null,
-                    rejectedAt: driverProfile.rejectedAt,
-                    rejectionReason: driverProfile.rejectionReason,
-                    statusMessage: getStatusMessage(driverProfile.verificationStatus)
-                }
-            }
-        });
-
-    } catch (error) {
-        console.error('Get driver profile error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
-    }
-};
-
-//get verification Status
-// route GET /api/drivers/verification-status
-
-exports.getVerificationStatus = async (req, res) => {
-    try{
-        const driverProfile = await Driver.findOne({ user: req.user.id })
-        .select('verificationStatus canAcceptRides rejectionReason rejectedAt verifiedAt verifiedBy statusHistory')
-        .populate('verifiedBy', 'fullname email');
-
-        if (!driverProfile) {
-            return res.status(404).json({
-                success: false,
-                message: 'Driver profile not found. Please create your profile first.'
-            });
-        }
-        res.status(200).json({
-            success: true,
-            data: {
-                verificationStatus: driverProfile.verificationStatus,
+        res.status(200).json(successResponse('Driver profile retrieved successfully', {
+            ...driverProfile.toObject(),
+            documentUploadStatus: documentStatus,
+            verificationInfo: {
+                status: driverProfile.verificationStatus,
                 canAcceptRides: driverProfile.canAcceptRides,
-                statusMessage: getStatusMessage(driverProfile.verificationStatus),
                 verifiedAt: driverProfile.verifiedAt,
                 verifiedBy: driverProfile.verifiedBy ? {
                     name: driverProfile.verifiedBy.fullname,
                     email: driverProfile.verifiedBy.email
-                }: null,
+                } : null,
                 rejectedAt: driverProfile.rejectedAt,
                 rejectionReason: driverProfile.rejectionReason,
-                addStatusHistory: driverProfile.statusHistory,
-                nextSteps: getNextSteps(driverProfile.verificationStatus)
+                statusMessage: getStatusMessage(driverProfile.verificationStatus)
             }
-        });
+        }));
+
+    } catch (error) {
+        console.error('Get driver profile error:', error);
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
+    }
+};
+
+
+//     Get Verification Status
+// route   GET /api/drivers/verification-status
+
+exports.getVerificationStatus = async (req, res) => {
+    try {
+        const driverProfile = await Driver.findOne({ user: req.user.id })
+            .select('verificationStatus rejectionReason canAcceptRides verifiedAt rejectedAt statusHistory')
+            .populate('verifiedBy', 'fullname email');
+
+        if (!driverProfile) {
+            return res.status(404).json(errorResponse('Driver profile not found. Please create your profile first.'));
+        }
+
+        res.status(200).json(successResponse('Verification status retrieved', {
+            verificationStatus: driverProfile.verificationStatus,
+            canAcceptRides: driverProfile.canAcceptRides,
+            statusMessage: getStatusMessage(driverProfile.verificationStatus),
+            verifiedAt: driverProfile.verifiedAt,
+            verifiedBy: driverProfile.verifiedBy ? {
+                name: driverProfile.verifiedBy.fullname,
+                email: driverProfile.verifiedBy.email
+            } : null,
+            rejectedAt: driverProfile.rejectedAt,
+            rejectionReason: driverProfile.rejectionReason,
+            statusHistory: driverProfile.statusHistory,
+            nextSteps: getNextSteps(driverProfile.verificationStatus)
+        }));
+
     } catch (error) {
         console.error('Get verification status error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
 
-// Check Document Upload Status
-// @route   GET /api/drivers/profile/document-status
+//    Update Driver Location
+// route   PUT /api/drivers/location
 
-
-exports.getDocumentStatus = async (req, res) => {
-    try {
-        const driverProfile = await Driver.findOne({ user: req.user.id });
-
-        if (!driverProfile) {
-            return res.status(404).json({
-                success: false,
-                message: 'Driver profile not found'
-            });
-        }
-
-        const documentStatus = driverProfile.areAllDocumentsUploaded();
-
-        res.status(200).json({
-            success: true,
-            data: {
-                profileStatus: driverProfile.profileStatus,
-                allDocumentsUploaded: documentStatus.allUploaded,
-                missingDocuments: documentStatus.missingDocuments,
-                uploadedDocuments: {
-                    personal: {
-                        driverImage: !!driverProfile.documents.driverImage,
-                        cnicFront: !!driverProfile.documents.cnicFront,
-                        cnicBack: !!driverProfile.documents.cnicBack,
-                        drivingLicenseFront: !!driverProfile.documents.drivingLicenseFront,
-                        drivingLicenseBack: !!driverProfile.documents.drivingLicenseBack
-                    },
-                    vehicle: {
-                        registrationDocument: !!driverProfile.vehicleDocuments.registrationDocument,
-                        vehicleFrontImage: !!driverProfile.vehicleDocuments.vehicleFrontImage,
-                        vehicleBackImage: !!driverProfile.vehicleDocuments.vehicleBackImage,
-                        vehicleLeftImage: !!driverProfile.vehicleDocuments.vehicleLeftImage,
-                        vehicleRightImage: !!driverProfile.vehicleDocuments.vehicleRightImage
-                    }
-                },
-                summary: {
-                    totalRequired: 10,
-                    totalUploaded: 10 - documentStatus.missingDocuments.length,
-                    percentageComplete: Math.round(((10 - documentStatus.missingDocuments.length) / 10) * 100)
-                }
-            }
-        });
-
-    } catch (error) {
-        console.error('Get document status error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
-    }
-};
-
-
-// @desc    Delete Driver Profile
-// @route   DELETE /api/drivers/profile
-
-exports.deleteDriverProfile = async (req, res) => {
-    try {
-        const driverProfile = await Driver.findOne({ user: req.user.id });
-
-        if (!driverProfile) {
-            return res.status(404).json({
-                success: false,
-                message: 'Driver profile not found'
-            });
-        }
-
-        // Delete all uploaded documents
-        const documentsToDelete = [
-            driverProfile.documents.driverImage,
-            driverProfile.documents.cnicFront,
-            driverProfile.documents.cnicBack,
-            driverProfile.documents.drivingLicenseFront,
-            driverProfile.documents.drivingLicenseBack,
-            driverProfile.vehicleDocuments.registrationDocument,
-            driverProfile.vehicleDocuments.vehicleFrontImage,
-            driverProfile.vehicleDocuments.vehicleBackImage,
-            driverProfile.vehicleDocuments.vehicleLeftImage,
-            driverProfile.vehicleDocuments.vehicleRightImage
-        ];
-
-        documentsToDelete.forEach(filePath => {
-            if (filePath && fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-        });
-
-        await Driver.findByIdAndDelete(driverProfile._id);
-
-        res.status(200).json({
-            success: true,
-            message: 'Driver profile and all documents deleted successfully'
-        });
-
-    } catch (error) {
-        console.error('Delete driver profile error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
-    }
-};
-
-// update Driver Location
-// PUT /api/drivers/location
 exports.updateLocation = async (req, res) => {
     try {
         const { latitude, longitude } = req.body;
 
-        // Validate input
-        if (!latitude || !longitude) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide both latitude and longitude',
-                missingFields: {
-                    latitude: !latitude,
-                    longitude: !longitude
-                }
-            });
+        if (latitude === undefined || longitude === undefined) {
+            return res.status(400).json(errorResponse('Please provide both latitude and longitude', null, {
+                missingFields: { latitude: latitude === undefined, longitude: longitude === undefined }
+            }));
         }
 
-        // Validate latitude
-        const lat = parseFloat(latitude);
-        if (isNaN(lat) || lat < -90 || lat > 90) {
-            return res.status(400).json({
-                success: false,
-                message: 'Latitude must be a valid number between -90 and 90',
-                field: 'latitude',
-                receivedValue: latitude,
-                validRange: { min: -90, max: 90 }
-            });
+        const validation = validateCoordinates(latitude, longitude);
+        if (!validation.valid) {
+            return res.status(400).json(errorResponse(validation.message));
         }
 
-        // Validate longitude
-        const lng = parseFloat(longitude);
-        if (isNaN(lng) || lng < -180 || lng > 180) {
-            return res.status(400).json({
-                success: false,
-                message: 'Longitude must be a valid number between -180 and 180',
-                field: 'longitude',
-                receivedValue: longitude,
-                validRange: { min: -180, max: 180 }
-            });
+        const driverProfile = await Driver.findOne({ user: req.user.id }).populate('user', 'fullname email mobile');
+
+        if (!driverProfile) {
+            return res.status(404).json(errorResponse('Driver profile not found. Please create your profile first.', null, { requiresProfileCreation: true }));
         }
 
-        // Get driver profile from middleware (already verified as approved)
-        const driverProfile = req.driverProfile;
+        if (driverProfile.verificationStatus === 'pending') {
+            return res.status(403).json(errorResponse('Location updates not allowed. Your profile is still pending verification.', null, {
+                verificationStatus: 'pending',
+                reason: 'Only approved drivers can update their location',
+                nextSteps: getNextSteps('pending')
+            }));
+        }
 
-        // Update location
+        if (driverProfile.verificationStatus === 'rejected') {
+            return res.status(403).json(errorResponse('Location updates not allowed. Your profile has been rejected.', null, {
+                verificationStatus: 'rejected',
+                rejectionReason: driverProfile.rejectionReason,
+                reason: 'Only approved drivers can update their location',
+                nextSteps: getNextSteps('rejected')
+            }));
+        }
+
+        if (driverProfile.verificationStatus !== 'approved') {
+            return res.status(403).json(errorResponse('Location updates not allowed. Invalid verification status.', null, {
+                verificationStatus: driverProfile.verificationStatus,
+                reason: 'Only approved drivers can update their location'
+            }));
+        }
+
+        const previousLocation = driverProfile.currentLocation?.coordinates 
+            ? { latitude: driverProfile.currentLocation.coordinates[1], longitude: driverProfile.currentLocation.coordinates[0] }
+            : null;
+
         driverProfile.currentLocation = {
             type: 'Point',
-            coordinates: [lng, lat]
+            coordinates: [validation.lng, validation.lat]
         };
         driverProfile.lastLocationUpdate = Date.now();
-
         await driverProfile.save();
 
-        res.status(200).json({
-            success: true,
-            message: 'Location updated successfully',
-            data: {
-                location: {
-                    latitude: lat,
-                    longitude: lng,
-                    type: 'Point',
-                    coordinates: [lng, lat]
-                },
-                updatedAt: driverProfile.lastLocationUpdate,
-                isAvailable: driverProfile.isAvailable,
-                canAcceptRides: driverProfile.canAcceptRides,
-                verificationStatus: driverProfile.verificationStatus
-            }
-        });
+        res.status(200).json(successResponse('Location updated successfully', {
+            driverId: driverProfile._id,
+            driver: {
+                name: driverProfile.user.fullname,
+                email: driverProfile.user.email
+            },
+            location: {
+                latitude: validation.lat,
+                longitude: validation.lng,
+                coordinates: [validation.lng, validation.lat],
+                type: 'Point'
+            },
+            previousLocation,
+            updatedAt: driverProfile.lastLocationUpdate,
+            isAvailable: driverProfile.isAvailable,
+            canAcceptRides: driverProfile.canAcceptRides
+        }));
 
     } catch (error) {
-        console.error('Update driver location error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        console.error('Update location error:', error);
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
-//     Get Current Location
-// @route   GET /api/drivers/location
+
+//    Get Current Location
+// route   GET /api/drivers/location
 
 exports.getCurrentLocation = async (req, res) => {
     try {
@@ -541,145 +319,104 @@ exports.getCurrentLocation = async (req, res) => {
             .select('currentLocation lastLocationUpdate isAvailable canAcceptRides verificationStatus');
 
         if (!driverProfile) {
-            return res.status(404).json({
-                success: false,
-                message: 'Driver profile not found'
-            });
+            return res.status(404).json(errorResponse('Driver profile not found'));
         }
 
-        // Check if location exists
         if (!driverProfile.currentLocation || !driverProfile.currentLocation.coordinates) {
-            return res.status(200).json({
-                success: true,
-                message: 'No location data available',
-                data: {
-                    hasLocation: false,
-                    location: null,
-                    lastUpdate: null,
-                    verificationStatus: driverProfile.verificationStatus,
-                    canUpdateLocation: driverProfile.verificationStatus === 'approved'
-                }
-            });
+            return res.status(200).json(successResponse('No location data available', {
+                hasLocation: false,
+                location: null,
+                lastUpdate: null,
+                verificationStatus: driverProfile.verificationStatus,
+                canUpdateLocation: driverProfile.verificationStatus === 'approved'
+            }));
         }
 
-        res.status(200).json({
-            success: true,
-            data: {
-                hasLocation: true,
-                location: {
-                    latitude: driverProfile.currentLocation.coordinates[1],
-                    longitude: driverProfile.currentLocation.coordinates[0],
-                    coordinates: driverProfile.currentLocation.coordinates,
-                    type: driverProfile.currentLocation.type
-                },
-                lastUpdate: driverProfile.lastLocationUpdate,
-                isAvailable: driverProfile.isAvailable,
-                canAcceptRides: driverProfile.canAcceptRides,
-                verificationStatus: driverProfile.verificationStatus
-            }
-        });
+        res.status(200).json(successResponse('Location retrieved successfully', {
+            hasLocation: true,
+            location: {
+                latitude: driverProfile.currentLocation.coordinates[1],
+                longitude: driverProfile.currentLocation.coordinates[0],
+                coordinates: driverProfile.currentLocation.coordinates,
+                type: driverProfile.currentLocation.type
+            },
+            lastUpdate: driverProfile.lastLocationUpdate,
+            isAvailable: driverProfile.isAvailable,
+            canAcceptRides: driverProfile.canAcceptRides,
+            verificationStatus: driverProfile.verificationStatus
+        }));
 
     } catch (error) {
         console.error('Get location error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
 
-//   Toggle Driver Availability
-// @route   PUT /api/drivers/availability
+//  Toggle Driver Availability
+// route   PUT /api/drivers/availability
 
 exports.toggleAvailability = async (req, res) => {
     try {
         const { isAvailable } = req.body;
 
         if (typeof isAvailable !== 'boolean') {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide isAvailable as true or false',
-                field: 'isAvailable'
-            });
+            return res.status(400).json(errorResponse('Please provide isAvailable as a boolean value (true or false)', 'isAvailable'));
         }
 
-        // Get driver profile from middleware (already verified as approved)
-        const driverProfile = req.driverProfile;
+        const driverProfile = await Driver.findOne({ user: req.user.id });
 
-        // Check if location is set before going online
-        if (isAvailable && !driverProfile.currentLocation?.coordinates) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please update your location before going online',
+        if (!driverProfile) {
+            return res.status(404).json(errorResponse('Driver profile not found'));
+        }
+
+        if (driverProfile.verificationStatus !== 'approved') {
+            return res.status(403).json(errorResponse('Cannot change availability. Only approved drivers can go online.', null, {
+                verificationStatus: driverProfile.verificationStatus
+            }));
+        }
+
+        if (isAvailable && (!driverProfile.currentLocation || !driverProfile.currentLocation.coordinates)) {
+            return res.status(400).json(errorResponse('Cannot go online without location. Please update your location first.', null, {
                 requiresLocation: true
-            });
+            }));
         }
 
         driverProfile.isAvailable = isAvailable;
         await driverProfile.save();
 
-        res.status(200).json({
-            success: true,
-            message: `You are now ${isAvailable ? 'online' : 'offline'}`,
-            data: {
-                isAvailable: driverProfile.isAvailable,
-                canAcceptRides: driverProfile.canAcceptRides && isAvailable,
-                currentLocation: driverProfile.currentLocation
-            }
-        });
+        res.status(200).json(successResponse(`Driver is now ${isAvailable ? 'online' : 'offline'}`, {
+            driverId: driverProfile._id,
+            isAvailable: driverProfile.isAvailable,
+            canAcceptRides: driverProfile.canAcceptRides,
+            hasLocation: !!driverProfile.currentLocation?.coordinates
+        }));
 
     } catch (error) {
         console.error('Toggle availability error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
-//   Find Nearby Drivers (for ride matching)
-// @route   POST /api/drivers/nearby
+
+//    Find Nearby Drivers
+// route   POST /api/drivers/nearby
 
 exports.findNearbyDrivers = async (req, res) => {
     try {
         const { latitude, longitude, maxDistance = 5000, vehicleType } = req.body;
 
-        // Validate input
         if (!latitude || !longitude) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide latitude and longitude',
-                missingFields: {
-                    latitude: !latitude,
-                    longitude: !longitude
-                }
-            });
+            return res.status(400).json(errorResponse('Please provide latitude and longitude', null, {
+                missingFields: { latitude: !latitude, longitude: !longitude }
+            }));
         }
 
-        const lat = parseFloat(latitude);
-        const lng = parseFloat(longitude);
-
-        // Validate coordinates
-        if (isNaN(lat) || lat < -90 || lat > 90) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid latitude',
-                field: 'latitude'
-            });
+        const validation = validateCoordinates(latitude, longitude);
+        if (!validation.valid) {
+            return res.status(400).json(errorResponse(validation.message));
         }
 
-        if (isNaN(lng) || lng < -180 || lng > 180) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid longitude',
-                field: 'longitude'
-            });
-        }
-
-        // Build query
         const query = {
             verificationStatus: 'approved',
             isAvailable: true,
@@ -688,31 +425,26 @@ exports.findNearbyDrivers = async (req, res) => {
                 $near: {
                     $geometry: {
                         type: 'Point',
-                        coordinates: [lng, lat]
+                        coordinates: [validation.lng, validation.lat]
                     },
-                    $maxDistance: parseInt(maxDistance) // meters
+                    $maxDistance: parseInt(maxDistance)
                 }
             }
         };
 
-        // Filter by vehicle type if provided
-        if (vehicleType) {
+        if (vehicleType && validateVehicleType(vehicleType)) {
             query.vehicleType = vehicleType;
         }
 
-        // Find nearby drivers
         const nearbyDrivers = await Driver.find(query)
             .populate('user', 'fullname mobile')
             .select('user vehicleType vehicleLicenseNumber currentLocation rating totalRides isAvailable')
             .limit(20);
 
-        // Calculate distances and format response
         const driversWithDistance = nearbyDrivers.map(driver => {
             const driverLng = driver.currentLocation.coordinates[0];
             const driverLat = driver.currentLocation.coordinates[1];
-            
-            // Calculate distance using Haversine formula
-            const distance = calculateDistance(lat, lng, driverLat, driverLng);
+            const distance = calculateDistance(validation.lat, validation.lng, driverLat, driverLng);
 
             return {
                 driverId: driver._id,
@@ -722,10 +454,7 @@ exports.findNearbyDrivers = async (req, res) => {
                 },
                 vehicleType: driver.vehicleType,
                 vehicleLicenseNumber: driver.vehicleLicenseNumber,
-                location: {
-                    latitude: driverLat,
-                    longitude: driverLng
-                },
+                location: { latitude: driverLat, longitude: driverLng },
                 distance: {
                     meters: Math.round(distance),
                     kilometers: (distance / 1000).toFixed(2)
@@ -736,79 +465,40 @@ exports.findNearbyDrivers = async (req, res) => {
             };
         });
 
-        // Sort by distance
         driversWithDistance.sort((a, b) => a.distance.meters - b.distance.meters);
 
-        res.status(200).json({
-            success: true,
+        res.status(200).json(successResponse(`Found ${driversWithDistance.length} nearby drivers`, {
             count: driversWithDistance.length,
-            searchLocation: {
-                latitude: lat,
-                longitude: lng
-            },
-            maxDistance: {
-                meters: maxDistance,
-                kilometers: (maxDistance / 1000).toFixed(2)
-            },
-            data: driversWithDistance
-        });
+            searchLocation: { latitude: validation.lat, longitude: validation.lng },
+            maxDistance: { meters: maxDistance, kilometers: (maxDistance / 1000).toFixed(2) },
+            drivers: driversWithDistance
+        }));
 
     } catch (error) {
         console.error('Find nearby drivers error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
 
-// HELPER FUNCTIONs: Calculate Distance (Haversine)
+//  Delete Driver Profile
+// route   DELETE /api/drivers/profile
 
-function getStatusMessage(status) {
-    const messages = {
-        pending: 'Your profile is under review. You will be notified once verified.',
-        approved: 'Your profile has been approved! You can now accept rides.',
-        rejected: 'Your profile has been rejected. Please check the rejection reason and resubmit.'
-    };
-    return messages[status] || 'Unknown status';
-}
+exports.deleteDriverProfile = async (req, res) => {
+    try {
+        const driverProfile = await Driver.findOne({ user: req.user.id });
 
-function getNextSteps(status) {
-    const steps = {
-        pending: [
-            'Wait for admin verification',
-            'You will receive a notification once your profile is reviewed',
-            'Verification typically takes 24-48 hours'
-        ],
-        approved: [
-            'You can now start accepting rides',
-            'Make sure to update your availability status',
-            'Ensure your location services are enabled'
-        ],
-        rejected: [
-            'Review the rejection reason carefully',
-            'Update your documents if needed',
-            'Contact support if you need clarification',
-            'Resubmit your profile after corrections'
-        ]
-    };
-    return steps[status] || [];
-}
+        if (!driverProfile) {
+            return res.status(404).json(errorResponse('Driver profile not found'));
+        }
 
-function calculateDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // Earth's radius in meters
-    const φ1 = lat1 * Math.PI / 180;
-    const φ2 = lat2 * Math.PI / 180;
-    const Δφ = (lat2 - lat1) * Math.PI / 180;
-    const Δλ = (lon2 - lon1) * Math.PI / 180;
+        // Note: In production, you should also delete from Cloudinary
+        await Driver.findByIdAndDelete(driverProfile._id);
 
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        res.status(200).json(successResponse('Driver profile deleted successfully'));
 
-    return R * c; // Distance in meters
-}
+    } catch (error) {
+        console.error('Delete driver profile error:', error);
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
+    }
+};

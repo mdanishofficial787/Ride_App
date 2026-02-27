@@ -1,8 +1,22 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const morgan = require('morgan');
+const connectDB = require('./config/db');
+const errorHandler = require('./middleware/errorHandler');
+
+
+// Load environment variables FIRST
+dotenv.config({ path: './config/config.env' });
+
+// Initialize express app
+const app = express()
+//connect to database
+connectDB();
+
+//Middleware
+// Body parser middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const allowedOrigins = [
     'http://localhost:3000',
@@ -11,43 +25,23 @@ const allowedOrigins = [
     process.env.FRONTEND_URL  // Your frontend URL (added later)
 ].filter(Boolean);
 
-//const mongoSanitize = require('express-mongo-sanitize');
-//const helmet = require('helmet');
-//const rateLimit = require('express-rate-limit');
-const connectDB = require('./config/db');
-
-// Load environment variables FIRST
-dotenv.config({ path: './config/config.env' });
-
-// Initialize express app
-const app = express();
-
-
-// Body parser middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 // Enable CORS
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (mobile apps, Postman)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins.includes(origin)) {
-            return callback(null, true);
+        if (allowedOrigins.indexOf(origin) == -1) {
+            return callback(new Error('CORS poicy violation'), false);
         }
         
-        return callback(new Error('Not allowed by CORS'));
+        return callback(null, true);
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
 }));
 
-// Connect to database
-connectDB();
 
-// Dev logging middleware
+// Development logging middleware
 if (process.env.NODE_ENV === 'development') {
    app.use((req, res, next) => {
     console.log(`${req.method} ${req.originalUrl}`);
@@ -85,33 +79,20 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Server is healthy',
+    database: 'Connected',
     timestamp: new Date().toISOString()
   });
 });
 
 
 // Error handling for undefined routes
-app.use((req, res, next) => {
+app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route ${req.originalUrl} not found`,
-    availableRoutes: {
-      auth: [
-        'POST /api/auth/signup',
-        'POST /api/auth/verify-otp'
-      ]
-    }
+    message: `Route ${req.method} ${req.originalUrl} not found`
   });
 });
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.statusCode || 500).json({
-    success: false,
-    message: err.message || 'Server Error'
-  });
-});
+app.use(errorHandler);
 
 // Start server
 const PORT = process.env.PORT || 5000;
@@ -120,7 +101,15 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 });
 
 // Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
+process.on('unhandledRejection', (err) => {
   console.log(`Unhandled Rejection: ${err.message}`);
   server.close(() => process.exit(1));
 });
+
+//handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error(`Uncaughr Exception: ${err.message}`);
+  process.exit(1);
+});
+
+module.exports = app;

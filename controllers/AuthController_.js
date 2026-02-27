@@ -5,6 +5,8 @@ const User =  require('../models/user');
 const sendEmail = require('../utils/sendEmail');
 const jwt = require('jsonwebtoken');
 const { otpverificationTemplate, welcomeEmailTemplate } = require('../utils/emailTemplate');
+const { validateEmail, validateMobile, validatePasswordStrenth } = require('../utils/validators');
+const { errorResponse, successResponse } = require('../utils/helpers');
 
 //WELCOME SCREEN OPTIONS
 // ROUTES  GET /api/auth/welcome
@@ -14,17 +16,10 @@ exports.getWelcomeScreen = async (req, res) => {
         // getting welcome screen data from user model
         const welcomeData = User.getWelcomeScreenOptions();
 
-        res.status(200).json({
-            success: true,
-            data: welcomeData
-        });
+        res.status(200).json(successResponse('Welcome Screen loaded', welcomeData));
     } catch (error) {
         console.error('Welcome Screen Error: ', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server Error. Please try again.', null, {error: error.message}));
     }
 };
 // select Role (Driver or Customer)
@@ -35,20 +30,12 @@ exports.selectRole = async (req, res) => {
 
         //validation
         if (!role) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please select a role (driver or customer)',
-                field: 'role'
-            });
+            return res.status(400).json(errorResponse('Please select a role (driver or customer)', 'role'));
         }
 
         // Validate role value
         if (!['driver', 'customer'].includes(role)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid role. Please select either "driver" or "customer"',
-                field: 'role'
-            });
+            return res.status(400).json(errorResponse('Invalid role, Please select "driver" or "customer"', 'role'));
         }
         //generating unique temporary identifiers
 
@@ -72,27 +59,19 @@ exports.selectRole = async (req, res) => {
 
         //sending success response
 
-        res.status(200).json({
-            success: true,
-            message: `Role selected Successfully! You can now signup as ${role}`,
-            data: {
-                selectedRole: role,
-                sessionToken: sessionToken,
-                nextStep: `Please proceed to signup as ${role}`
-            }
-        });
+        res.status(200).json(successResponse(`Role selected: ${role}. Please proceed to signup.`, {
+            selectedRole: role,
+            sessionToken: sessionToken,
+            nextStep: `Complete signup as ${role}`
+        }));
 
     }catch (error) {
         console.error('select role error: ', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
-// Register user (send OTP)
+// Register user (send OTP) (after role selection)
 // Routes POST /api/auth/signup
 
 
@@ -104,122 +83,75 @@ exports.signup = async (req, res) => {
         //validating session Token
 
         if(!sessionToken) {
-            return res.status(400).json({
-                success: false,
-                message: 'Session token is required. Please select your role first. ',
-                redirectToWelcome: true
-            });
+            return res.status(400).json(errorResponse('Session token required. Please select a role first.', null, {redirectToWelcome: true}));
         }
 
         // find user by session token
         const user = await User.findOne({ sessionToken });
 
         if(!user) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid or expired session. Please select your role again.',
-                redirectToWelcome: true
-            });
+            return res.status(400).json(errorResponse('Invalide or expired Session. Please select your role again. ', null, {redirectToWelcome: true}));
         }
 
         //check if role was selected
         if (!user.selectedRole) {
-            return res.status(400).json({
-                success: false,
-                message: 'No role selected. Please select your role first.',
-                redirectToWelcome: true
-            });
+            return res.status(400).json(errorResponse('No role selected. Please select your role first.', null, { redirectToWelcome: true }));
         }
 
         // sessiontime out code here....................
+        const thirtyMinutes = 30 * 60 * 1000;
+        if (user.roleSelectedAt && (Date.now() - user.roleSelectedAt.getTime() > thirtyMinutes)) {
+            await User.findByIdAndDelete(user._id);
+            return res.status(400).json(errorResponse('Session expired. Please select your role again.', null, { redirectToWelcome: true }));
+        }
+
         // Validation of input fields.
         if (!fullname || !mobile || !email || !gender  || !password || !confirmpassword) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide all required fields',
-                missingfields: {
+            return res.status(400).json(errorResponse('Please provide all required fields', null, {
+                missingFields: {
                     fullname: !fullname,
                     mobile: !mobile,
                     email: !email,
-                    gender: !gender,
                     password: !password,
-                    confirmpassword: !confirmpassword
+                    confirmpassword: !confirmpassword,
+                    gender: !gender
                 }
-            });
+            }));
         }
 
         //validating email format
-        const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
-        if (!emailRegex.test(email)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide a valid email address',
-                field: 'email'
-            });
+        if (!validateEmail(email)) {
+            return res.status(400).json(errorResponse('Please provide a valid email address', 'email'));
         }
-        // if (!gender || gender === 'Select') {
-        //         return res.status(400).json({
-        //         success: false,
-        //         message: 'Please select a valid gender',
-        //         field: 'gender'
-        //     });
-        // }
 
-
-        //validating phone number (11 digit)
-        const mobileRegex = /^[0-9]{11}$/;
-        if (!mobileRegex.test(mobile)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Phone number must be exactly 11 digits',
-                field: 'mobile'
-            });
+        // Validate mobile
+        if (!validateMobile(mobile)) {
+            return res.status(400).json(errorResponse('Mobile number must be exactly 11 digits', 'mobile'));
         }
-        //validating password length 
 
-        if (password.length < 6) {
-            return res.status(400).json({
-                success: false,
-                message: 'Password must be atleast 6 characters long',
-                field: 'password'
-            });
+        // Validate password
+        const passwordValidation = validatePasswordStrength(password);
+        if (!passwordValidation.valid) {
+            return res.status(400).json(errorResponse(passwordValidation.message, 'password'));
         }
-        //checking if password matches
+
+        // Check if passwords match
         if (password !== confirmpassword) {
-            return res.status(400).json({
-                success: false,
-                message: 'Password do not match',
-                field: 'confirmpassword'
-            });
+            return res.status(400).json(errorResponse('Passwords do not match', 'confirmpassword'));
         }
 
-        // checking duplicate users
-        // if email already exists
-        const existingEmailUser = await User.findOne({ 
-            email,
-            _id: {$ne: user._id }
-        });
+        // Check duplicate email
+        const existingEmailUser = await User.findOne({ email, _id: { $ne: user._id } });
         if (existingEmailUser) {
-            return res.status(400).json({
-                success: false,
-                message: 'This email address is already registered',
-                field: 'email'
-            });
+            return res.status(400).json(errorResponse('This email address is already registered', 'email'));
         }
 
-        //if phone number already exists
-
-        const existingPhoneUser = await User.findOne({ 
-            mobile,
-            _id: {$ne: user._id }
-        });
-        if (existingPhoneUser) {
-            return res.status(400).json({
-                success: false,
-                message: 'This mobile number is already registered',
-                field: 'mobile'
-            });
+        // Check duplicate mobile
+        const existingMobileUser = await User.findOne({ mobile, _id: { $ne: user._id } });
+        if (existingMobileUser) {
+            return res.status(400).json(errorResponse('This mobile number is already registered', 'mobile'));
         }
+
 
         // updating user with actual data
         user.fullname = fullname;
@@ -238,18 +170,14 @@ exports.signup = async (req, res) => {
         // otp email sending
         const emailResult = await sendEmail({
             email: user.email,
-            subject: 'Verify your email address',
+            subject: 'Verify your Email- Ride App',
             html:otpverificationTemplate(user.fullname, otp)
         });
 
         if(!emailResult.success) {
             await User.findByIdAndDelete(user._id);
 
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to send verification email. Please try again'
-
-            });
+            return res.status(500).json(errorResponse('Failed to send verification email. Please try again.'));
         }
 
         // generating session token
@@ -257,28 +185,21 @@ exports.signup = async (req, res) => {
 
         // sending success response for registration and OTP
 
-        res.status(201).json({
-            success: true,
-            message: 'Registration Successful! Please check your Email for OTP.',
-            data: {
-                userId: user._id,
-                fullname: user.fullname,
-                email: user.email,
-                mobile: user.mobile,
-                gender: user.gender,
-                sessionToken,
-                otpSent: true,
-                otpExpiresIn: '5 minutes'
-            }
-        });
+        res.status(201).json(successResponse(`Registration successful as ${user.userType}! Please check your email for OTP.`, {
+            userId: user._id,
+            fullname: user.fullname,
+            email: user.email,
+            mobile: user.mobile,
+            userType: user.userType,
+            gender: user.gender,
+            sessionToken: user.sessionToken,
+            otpSent: true,
+            otpExpiresIn: '5 minutes'
+        }));
 
     } catch (error) {
         console.error('Signup error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server Error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
@@ -291,19 +212,12 @@ exports.verifyOTP = async (req, res) => {
 
         // validate input
         if (!email || !otp ||!sessionToken) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide email , OTP and session Token'
-            });
+            return res.status(400).json(errorResponse('Please provide email, OTP, and session token'));
         }
 
         //validate OTP FORMAT (6 DIGITS)
         if(!/^[0-9]{6}$/.test(otp)) {
-            return res.status(400).json({
-                success: false,
-                message: 'OTP must be 6 digit',
-                field: 'otp'
-            });
+            return res.status(400).json(errorResponse('OTP must be 6 digits', 'otp'));
         }
         // find user
         const user = await User.findOne({
@@ -312,19 +226,12 @@ exports.verifyOTP = async (req, res) => {
         });
 
         if (!user) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid Session. Please register again. ',
-                redirectToHome: true
-            });
+            return res.status(400).json(errorResponse('Invalid session. Please register again.', null, { redirectToHome: true }));
         }
 
         //Check if already verified
         if (user.isemailverified) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email is already verified. Please login.'
-            });
+            return res.status(400).json(errorResponse('Email is already verified. Please login.'));
         }
 
         //hash the entered OTP
@@ -337,19 +244,11 @@ exports.verifyOTP = async (req, res) => {
         //check if otp matches
 
         if(user.emailVerficationOTP !== hashedOTP) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid OTP, Please Try again',
-                failed: 'otp'
-            });
+            return res.status(400).json(errorResponse('Invalid OTP. Please check and try again.', 'otp'));
         }
         //check if otp is expired: 
         if (user.emailOTPExpire < Date.now()) {
-            return res.status(400).json({
-                success: false,
-                message: 'OTP has expired. Request a new one.',
-                otpExpired: true
-            });
+            return res.status(400).json(errorResponse('OTP has expired. Please request a new one.', null, { otpExpired: true }));
         }
         //marking verified:
         user.isemailverified = true;
@@ -370,29 +269,23 @@ exports.verifyOTP = async (req, res) => {
 
 
         // sending Success response for verification compeletion
-        res.status(200).json({
-            success: true,
-            message: 'Email Verified Successfully! Welcome to Ride App.',
+        res.status(200).json(successResponse(`Email verified successfully! Welcome as ${user.userType}.`, {
             token,
-            data: {
+            user: {
                 userId: user._id,
                 fullname: user.fullname,
                 email: user.email,
                 mobile: user.mobile,
                 userType: user.userType,
-                gender:user.gender,
+                gender: user.gender,
                 isemailverified: user.isemailverified
             }
-        });
+        }));
 
 
     }catch (error){
         console.error('OTP verification error: ', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
@@ -404,10 +297,7 @@ exports.resendOTP = async (req, res) =>{
         const { email, sessionToken } = req.body;
 
         if (!email || !sessionToken) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide email and session token'
-            });
+            return res.status(400).json(errorResponse('Please provide email and session token'));
         }
         const user = await User.findOne({
             email,
@@ -416,10 +306,7 @@ exports.resendOTP = async (req, res) =>{
         });
 
         if (!user) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid session or email already verified'
-            });
+            return res.status(400).json(errorResponse('Invalid session or email already verified'));
         }
         const otp = user.generateEmailVerficationOTP();
         await user.save();
@@ -431,27 +318,16 @@ exports.resendOTP = async (req, res) =>{
         });
 
         if(!emailResult.success) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to send verification email. Please try again.'
-            });
+            return res.status(500).json(errorResponse('Failed to send verification email. Please try again.'));
         }
-        res.status(200).json({
-            success: true,
-            message: 'New OTP send to you email',
-            data: {
-                email: user.email,
-                otpSent: true,
-                otpExpiredIn: '5 minutes'
-            }
-        });
+        res.status(200).json(successResponse('New OTP sent to your email', {
+            email: user.email,
+            otpSent: true,
+            otpExpiresIn: '5 minutes'
+        }));
     } catch (error) {
         console.error('Resend OTP error: ', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 //login user
@@ -462,54 +338,34 @@ exports.login = async (req, res) => {
         const { email, password } = req.body;
 
         if (!email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: 'Please provide email and password'
-            });
+            return res.status(400).json(errorResponse('Please provide email and password'));
         }
 
         const user = await User.findOne({ email }).select('+password');
 
         if(!user) {
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid email or password',
-                field: 'email'
-            });
+            return res.status(401).json(errorResponse('Invalid email or password', 'email'));
         }
 
         if (!user.isemailverified) {
-            return res.status(403).json({
-                success: false,
-                message: 'Please verify your email before logging in',
-                emailNotVerified: true
-            });
+            return res.status(403).json(errorResponse('Please verify your email before logging in', null, { emailNotVerified: true }));
         }
 
         const isMatch = await user.matchPassword(password);
 
         if (!isMatch) {
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid email or password',
-                field: 'password'
-            });
+            return res.status(401).json(errorResponse('Invalid email or password', 'password'));
         }
 
         if (!user.isActive) {
-            return res.status(403).json({
-                success: false,
-                message: 'Your account has been deactivated. Please contact support.'
-            });
+            return res.status(403).json(errorResponse('Your account has been deactivated. Please contact support.'));
         }
 
         const token = user.getSignedJwtToken();
 
-        res.status(200).json({
-            success: true,
-            message: 'Login successful',
+        res.status(200).json(successResponse(`Login successful as ${user.userType}`, {
             token,
-            data: {
+            user: {
                 userId: user._id,
                 fullname: user.fullname,
                 email: user.email,
@@ -518,14 +374,10 @@ exports.login = async (req, res) => {
                 gender: user.gender,
                 isemailverified: user.isemailverified
             }
-        });
+        }));
     } catch (error) {
         console.error('Login error: ', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 //current user
@@ -535,17 +387,10 @@ exports.getMe = async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
 
-        res.status(200).json({
-            success: true,
-            data: user
-        });
+        res.status(200).json(successResponse('User retrieved successfully', user));
     } catch (error) {
         console.error('Get user error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
 
@@ -555,16 +400,9 @@ exports.getMe = async (req, res) => {
 
 exports.logout = async (req, res) => {
     try{
-        res.status(200).json({
-            success: true,
-            message: 'Logged out successfully'
-        });
+        res.status(200).json(successResponse('Logged out successfully'));
     } catch (error) {
         console.error('Logout error: ', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error. Please try again.',
-            error: error.message
-        });
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };

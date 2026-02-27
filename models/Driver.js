@@ -191,7 +191,7 @@ const DriverSchema = new mongoose.Schema(
             coordinates: {
                 type: [Number], // [longitude, latitude]
                 //index: '2dsphere'
-                default: undefined
+                //default: undefined
             }
         },
         lastlocationUpdate:{
@@ -228,8 +228,10 @@ const DriverSchema = new mongoose.Schema(
 // INDEXES
 
 
-DriverSchema.index({ currentLocation: '2dsphere' });
+DriverSchema.index({ currentLocation: '2dsphere' }, {sparse: true});
 DriverSchema.index({ verificationStatus: 1 });
+
+
 
 
 

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { version } = require('os');
+//const { version } = require('os');
 
 
 const UserSchema = new mongoose.Schema(
