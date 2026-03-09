@@ -5,7 +5,9 @@ const {
     getDriverById,
     approveDriver,
     rejectDriver,
-    getVerificationStats
+    getVerificationStats,
+    getDriverFullDetails,
+    getSensitiveAccessLog
 } = require('../controllers/adminController');
 
 const { protect, authorizeUserType } = require('../middleware/auth');
@@ -22,7 +24,9 @@ router.get('/drivers/stats', getVerificationStats);
 // Driver management
 router.get('/drivers/pending', getPendingDrivers);
 router.get('/drivers', getAllDrivers);
-router.get('/drivers/:id', getDriverById);
+router.get('/drivers/:id', getDriverById);// basic info only
+router.get('/drivers/:id/full', getDriverFullDetails);  // - Full sensitive data
+router.get('/drivers/:id/access-log', getSensitiveAccessLog);  //audit log
 
 // Verification actions
 router.put('/drivers/:id/approve', approveDriver);

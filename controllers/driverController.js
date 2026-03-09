@@ -122,7 +122,7 @@ exports.createDriverProfile = async (req, res) => {
                 email: driverProfile.user.email,
                 mobile: driverProfile.user.mobile
             },
-            personalInfo: { cnic: driverProfile.cnic },
+            personalInfo: { cnic: driverProfile.getMaskedCNIC() },
             personalDocuments: driverProfile.documents,
             vehicleInfo: {
                 vehicleType: driverProfile.vehicleType,
@@ -165,22 +165,22 @@ exports.getDriverProfile = async (req, res) => {
             return res.status(404).json(errorResponse('Driver profile not found. Please create your profile first.'));
         }
 
-        const documentStatus = driverProfile.areAllDocumentsUploaded();
+       // const documentStatus = driverProfile.areAllDocumentsUploaded();
 
         res.status(200).json(successResponse('Driver profile retrieved successfully', {
-            ...driverProfile.toObject(),
-            documentUploadStatus: documentStatus,
+            profile: driverProfile.getDriverOwnInfo(),
+            user: {
+                fullname: driverProfile.user.fullname,
+                email: driverProfile.user.email,
+                mobile: driverProfile.user.mobile,
+                gender: driverProfile.user.gender
+            },
             verificationInfo: {
                 status: driverProfile.verificationStatus,
                 canAcceptRides: driverProfile.canAcceptRides,
-                verifiedAt: driverProfile.verifiedAt,
-                verifiedBy: driverProfile.verifiedBy ? {
-                    name: driverProfile.verifiedBy.fullname,
-                    email: driverProfile.verifiedBy.email
-                } : null,
-                rejectedAt: driverProfile.rejectedAt,
+                statusMessage: getStatusMessage(driverProfile.verificationStatus),
                 rejectionReason: driverProfile.rejectionReason,
-                statusMessage: getStatusMessage(driverProfile.verificationStatus)
+                nextSteps: getNextSteps(driverProfile.verificationStatus)
             }
         }));
 
@@ -309,6 +309,100 @@ exports.updateLocation = async (req, res) => {
     }
 };
 
+// ============================================
+// @desc    Set Driver Availability & Preferences
+// @route   PUT /api/drivers/availability-settings
+// @access  Private (Approved Driver Only)
+// ============================================
+exports.setAvailabilitySettings = async (req, res) => {
+    try {
+        const {
+            availabilityDays,
+            availabilityStartTime,
+            availabilityEndTime,
+            preferredRouteArea,
+            serviceRadiusKm
+        } = req.body;
+
+        const driverProfile = await Driver.findOne({ user: req.user.id });
+
+        if (!driverProfile) {
+            return res.status(404).json(errorResponse('Driver profile not found'));
+        }
+
+        // Only approved drivers can set availability
+        if (driverProfile.verificationStatus !== 'approved') {
+            return res.status(403).json(errorResponse('Only approved drivers can set availability settings', null, {
+                verificationStatus: driverProfile.verificationStatus,
+                reason: 'Please wait for admin approval'
+            }));
+        }
+
+        // Validate availability days
+        const validDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        if (availabilityDays) {
+            const invalidDays = availabilityDays.filter(day => !validDays.includes(day));
+            if (invalidDays.length > 0) {
+                return res.status(400).json(errorResponse(`Invalid days: ${invalidDays.join(', ')}`, 'availabilityDays'));
+            }
+            driverProfile.availability.availabilityDays = availabilityDays;
+        }
+        // Validate time format (HH:MM)
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        
+        if (availabilityStartTime) {
+            if (!timeRegex.test(availabilityStartTime)) {
+                return res.status(400).json(errorResponse('Invalid start time format. Use HH:MM (e.g., 09:00)', 'availabilityStartTime'));
+            }
+            driverProfile.availability.availabilityStartTime = availabilityStartTime;
+        }
+
+        if (availabilityEndTime) {
+            if (!timeRegex.test(availabilityEndTime)) {
+                return res.status(400).json(errorResponse('Invalid end time format. Use HH:MM (e.g., 18:00)', 'availabilityEndTime'));
+            }
+            driverProfile.availability.availabilityEndTime = availabilityEndTime;
+        }
+
+        // Validate time range
+        if (driverProfile.availability.availabilityStartTime && driverProfile.availability.availabilityEndTime) {
+            if (driverProfile.availability.availabilityStartTime >= driverProfile.availability.availabilityEndTime) {
+                return res.status(400).json(errorResponse('End time must be after start time', 'availabilityEndTime'));
+            }
+        }
+        // Set preferred route area
+        if (preferredRouteArea) {
+            driverProfile.preferredRoute.area = preferredRouteArea.trim();
+        }
+
+        // Set service radius
+        if (serviceRadiusKm) {
+            const radius = parseFloat(serviceRadiusKm);
+            if (isNaN(radius) || radius < 1 || radius > 50) {
+                return res.status(400).json(errorResponse('Service radius must be between 1 and 50 km', 'serviceRadiusKm'));
+            }
+            driverProfile.preferredRoute.serviceRadiusKm = radius;
+        }
+
+        await driverProfile.save();
+
+        res.status(200).json(successResponse('Availability settings updated successfully', {
+            availability: {
+                availabilityDays: driverProfile.availability.availabilityDays,
+                availabilityStartTime: driverProfile.availability.availabilityStartTime,
+                availabilityEndTime: driverProfile.availability.availabilityEndTime
+            },
+            preferredRoute: {
+                area: driverProfile.preferredRoute.area,
+                serviceRadiusKm: driverProfile.preferredRoute.serviceRadiusKm
+            }
+        }));
+
+    } catch (error) {
+        console.error('Set availability settings error:', error);
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
+    }
+};
 
 //    Get Current Location
 // route   GET /api/drivers/location
@@ -375,12 +469,26 @@ exports.toggleAvailability = async (req, res) => {
                 verificationStatus: driverProfile.verificationStatus
             }));
         }
-
+        //IF going online, check requiremnents
         if (isAvailable && (!driverProfile.currentLocation || !driverProfile.currentLocation.coordinates)) {
             return res.status(400).json(errorResponse('Cannot go online without location. Please update your location first.', null, {
                 requiresLocation: true
             }));
         }
+
+        // Check if in preferred area settings
+            if (!driverProfile.preferredRoute.area) {
+                return res.status(400).json(errorResponse('Cannot go online without setting preferred route area.', null, {
+                    requiresPreferredRoute: true
+                }));
+            }
+
+            // Check if currently on a ride
+            if (driverProfile.currentRideStatus !== 'idle') {
+                return res.status(400).json(errorResponse('Cannot go online while on an active ride', null, {
+                    currentRideStatus: driverProfile.currentRideStatus
+                }));
+            }
 
         driverProfile.isAvailable = isAvailable;
         await driverProfile.save();
@@ -389,7 +497,8 @@ exports.toggleAvailability = async (req, res) => {
             driverId: driverProfile._id,
             isAvailable: driverProfile.isAvailable,
             canAcceptRides: driverProfile.canAcceptRides,
-            hasLocation: !!driverProfile.currentLocation?.coordinates
+            hasLocation: !!driverProfile.currentLocation?.coordinates,
+            preferredRoute: driverProfile.preferredRoute
         }));
 
     } catch (error) {
@@ -399,49 +508,65 @@ exports.toggleAvailability = async (req, res) => {
 };
 
 
-//    Find Nearby Drivers
-// route   POST /api/drivers/nearby
+//     Find Eligible Drivers for Ride Request
+// route   POST /api/drivers/find-eligible
+//  Private (Customer/System)
 
-exports.findNearbyDrivers = async (req, res) => {
+exports.findEligibleDrivers = async (req, res) => {
     try {
-        const { latitude, longitude, maxDistance = 5000, vehicleType } = req.body;
+        const { pickupLatitude, pickupLongitude, requestedArea, vehicleType } = req.body;
 
-        if (!latitude || !longitude) {
-            return res.status(400).json(errorResponse('Please provide latitude and longitude', null, {
-                missingFields: { latitude: !latitude, longitude: !longitude }
-            }));
+        if (!pickupLatitude || !pickupLongitude) {
+            return res.status(400).json(errorResponse('Please provide pickup latitude and longitude'));
         }
 
-        const validation = validateCoordinates(latitude, longitude);
+        const validation = validateCoordinates(pickupLatitude, pickupLongitude);
         if (!validation.valid) {
             return res.status(400).json(errorResponse(validation.message));
         }
 
+        // Build query for eligible drivers
         const query = {
             verificationStatus: 'approved',
-            isAvailable: true,
+            'availability.isAvailable': true,
             canAcceptRides: true,
-            currentLocation: {
-                $near: {
-                    $geometry: {
-                        type: 'Point',
-                        coordinates: [validation.lng, validation.lat]
-                    },
-                    $maxDistance: parseInt(maxDistance)
-                }
-            }
+            currentRideStatus: 'idle'  // Not currently on a ride
         };
 
+        // Filter by preferred route area if provided
+        if (requestedArea) {
+            query['preferredRoute.area'] = new RegExp(requestedArea, 'i');
+        }
+
+        // Filter by vehicle type if provided
         if (vehicleType && validateVehicleType(vehicleType)) {
             query.vehicleType = vehicleType;
         }
 
-        const nearbyDrivers = await Driver.find(query)
-            .populate('user', 'fullname mobile')
-            .select('user vehicleType vehicleLicenseNumber currentLocation rating totalRides isAvailable')
-            .limit(20);
+        // Find all potentially eligible drivers
+        const drivers = await Driver.find(query)
+            .select('user vehicleType vehicleInfo currentLocation preferredRoute rating totalRides availability completionRate acceptanceRate')
+            .populate('user', 'fullname mobile');
 
-        const driversWithDistance = nearbyDrivers.map(driver => {
+        // Filter drivers by:
+        // 1. Within service radius
+        // 2. Available today
+        // 3. Within availability time
+        const eligibleDrivers = drivers.filter(driver => {
+            // Check if within service area
+            const withinArea = driver.isWithinServiceArea(validation.lat, validation.lng);
+            
+            // Check if available today
+            const availableToday = driver.isAvailableToday();
+            
+            // Check if within time range
+            const withinTime = driver.isWithinAvailabilityTime();
+            
+            return withinArea && availableToday && withinTime;
+        });
+
+        // Calculate distances and sort by proximity
+        const driversWithDistance = eligibleDrivers.map(driver => {
             const driverLng = driver.currentLocation.coordinates[0];
             const driverLat = driver.currentLocation.coordinates[1];
             const distance = calculateDistance(validation.lat, validation.lng, driverLat, driverLng);
@@ -453,32 +578,43 @@ exports.findNearbyDrivers = async (req, res) => {
                     mobile: driver.user.mobile
                 },
                 vehicleType: driver.vehicleType,
-                vehicleLicenseNumber: driver.vehicleLicenseNumber,
-                location: { latitude: driverLat, longitude: driverLng },
+                vehicleInfo: driver.vehicleInfo,
+                location: {
+                    latitude: driverLat,
+                    longitude: driverLng
+                },
                 distance: {
                     meters: Math.round(distance),
                     kilometers: (distance / 1000).toFixed(2)
                 },
+                preferredRoute: {
+                    area: driver.preferredRoute.area,
+                    serviceRadiusKm: driver.preferredRoute.serviceRadiusKm
+                },
                 rating: driver.rating,
                 totalRides: driver.totalRides,
-                isAvailable: driver.isAvailable
+                completionRate: driver.completionRate,
+                acceptanceRate: driver.acceptanceRate,
+                priority: calculateDriverPriority(driver, distance)
             };
         });
 
-        driversWithDistance.sort((a, b) => a.distance.meters - b.distance.meters);
+        // Sort by priority (combination of distance, rating, completion rate)
+        driversWithDistance.sort((a, b) => b.priority - a.priority);
 
-        res.status(200).json(successResponse(`Found ${driversWithDistance.length} nearby drivers`, {
+        res.status(200).json(successResponse(`Found ${driversWithDistance.length} eligible drivers`, {
             count: driversWithDistance.length,
-            searchLocation: { latitude: validation.lat, longitude: validation.lng },
-            maxDistance: { meters: maxDistance, kilometers: (maxDistance / 1000).toFixed(2) },
+            pickupLocation: { latitude: validation.lat, longitude: validation.lng },
+            requestedArea,
             drivers: driversWithDistance
         }));
 
     } catch (error) {
-        console.error('Find nearby drivers error:', error);
+        console.error('Find eligible drivers error:', error);
         res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
+
 
 
 //  Delete Driver Profile
@@ -502,3 +638,19 @@ exports.deleteDriverProfile = async (req, res) => {
         res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
     }
 };
+
+// Helper function: Calculate driver priority
+function calculateDriverPriority(driver, distanceInMeters) {
+    const distanceScore = Math.max(0, 100 - (distanceInMeters / 100)); // Closer = higher
+    const ratingScore = (driver.rating || 0) * 20; // 0-100 scale
+    const completionScore = driver.completionRate || 0;
+    const acceptanceScore = driver.acceptanceRate || 0;
+
+    // Weighted priority calculation
+    return (
+        distanceScore * 0.4 +  // 40% weight on distance
+        ratingScore * 0.3 +    // 30% weight on rating
+        completionScore * 0.2 + // 20% weight on completion rate
+        acceptanceScore * 0.1   // 10% weight on acceptance rate
+    );
+}

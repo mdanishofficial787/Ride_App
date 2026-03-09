@@ -6,7 +6,8 @@ const {
     updateLocation,
     getCurrentLocation,
     toggleAvailability,
-    findNearbyDrivers,
+    setAvailabilitySettings,
+    findEligibleDrivers,
     deleteDriverProfile
 } = require('../controllers/driverController');
 
@@ -35,8 +36,9 @@ router.route('/location')
 
 //availability route
 router.put('/availability',toggleAvailability);
+router.put('/availability-settings', setAvailabilitySettings);
 
-//nearby drivers route
-router.post('/nearby', findNearbyDrivers);
+//find eligible drivers (can be called by customers or system)
+router.post('/find-eligible', findEligibleDrivers);
 
 module.exports = router;

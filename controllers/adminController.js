@@ -2,6 +2,67 @@ const Driver = require('../models/Driver');
 const User = require('../models/user');
 const { errorResponse, successResponse } = require('../utils/helpers');
 
+//Get Driver with sensitive data (admin Only)
+// GET /api/admin/drivers/:id/full
+// private(admin) - SENSITIVE DATA
+
+exports.getDriverFullDetails = async (req, res) => {
+    try {
+        // Explicitly select sensitive fields (they have select: false)
+        const driver = await Driver.findById(req.params.id)
+            .select('+cnic +documents +vehicleDocuments +vehicleLicenseNumber +vehicleRegistrationNumber')
+            .populate('user', 'fullname email mobile gender createdAt')
+            .populate('verifiedBy', 'fullname email')
+            .populate('statusHistory.changedBy', 'fullname email');
+
+        if (!driver) {
+            return res.status(404).json(errorResponse('Driver not found'));
+        }
+
+        // Log sensitive data access
+        driver.logSensitiveAccess(req.user.id, 'view', req.ip);
+        await driver.save();
+
+        // Return full details including sensitive data
+        res.status(200).json(successResponse('Driver full details retrieved (Admin Access)', {
+            ...driver.toObject(),
+            cnicDecrypted: driver.getDecryptedCNIC(),
+            sensitiveDataWarning: 'This response contains sensitive personal information. Handle with care.'
+        }));
+
+    } catch (error) {
+        console.error('Get driver full details error:', error);
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
+    }
+};
+
+
+//Get Sensitive Data Access Log
+//GET /api/admin/drivers/:id/access-log
+// private (admin)
+
+exports.getSensitiveAccessLog = async (req, res) => {
+    try {
+        const driver = await Driver.findById(req.params.id)
+            .select('sensitiveDataAccessLog')
+            .populate('sensitiveDataAccessLog.accessedBy', 'fullname email');
+
+        if (!driver) {
+            return res.status(404).json(errorResponse('Driver not found'));
+        }
+
+        res.status(200).json(successResponse('Access log retrieved', {
+            driverId: driver._id,
+            accessLog: driver.sensitiveDataAccessLog
+        }));
+
+    } catch (error) {
+        console.error('Get access log error:', error);
+        res.status(500).json(errorResponse('Server error. Please try again.', null, { error: error.message }));
+    }
+};
+
+
 
 //    Get All Pending Drivers
 // route   GET /api/admin/drivers/pending

@@ -31,12 +31,14 @@ app.use(cors({
         // Allow requests with no origin (mobile apps, Postman)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins.indexOf(origin) == -1) {
+        if (allowedOrigins.indexOf(origin)) {
             return callback(new Error('CORS poicy violation'), false);
         }
         
         return callback(null, true);
     },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['content-type', 'Authorization'],
     credentials: true
 }));
 
@@ -60,6 +62,7 @@ if (process.env.NODE_ENV === 'development') {
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/drivers', require('./routes/driverRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
+app.use('/api/customers', require('./routes/customerRoutes'));
 
 // serve upload files statically
 app.use('/uploads', express.static('uploads'));
@@ -84,7 +87,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-
+app.use(errorHandler);
 // Error handling for undefined routes
 app.use((req, res) => {
   res.status(404).json({

@@ -119,21 +119,21 @@ exports.signup = async (req, res) => {
             }));
         }
 
-        //validating email format
-        if (!validateEmail(email)) {
-            return res.status(400).json(errorResponse('Please provide a valid email address', 'email'));
-        }
+        // //validating email format
+        // if (!validateEmail(email)) {
+        //     return res.status(400).json(errorResponse('Please provide a valid email address', 'email'));
+        // }
 
         // Validate mobile
-        if (!validateMobile(mobile)) {
-            return res.status(400).json(errorResponse('Mobile number must be exactly 11 digits', 'mobile'));
-        }
+        // if (!validateMobile(mobile)) {
+        //     return res.status(400).json(errorResponse('Mobile number must be exactly 11 digits', 'mobile'));
+        // }
 
         // Validate password
-        const passwordValidation = validatePasswordStrength(password);
-        if (!passwordValidation.valid) {
-            return res.status(400).json(errorResponse(passwordValidation.message, 'password'));
-        }
+        // const passwordValidation = validatePasswordStrength(password);
+        // if (!passwordValidation.valid) {
+        //     return res.status(400).json(errorResponse(passwordValidation.message, 'password'));
+        // }
 
         // Check if passwords match
         if (password !== confirmpassword) {
