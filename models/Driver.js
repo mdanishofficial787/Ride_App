@@ -309,7 +309,7 @@ const DriverSchema = new mongoose.Schema(
 
 DriverSchema.index({ currentLocation: '2dsphere' }, {sparse: true});
 DriverSchema.index({ verificationStatus: 1 });
-DriverSchema.index({ user: 1 });
+//DriverSchema.index({ user: 1 });
 DriverSchema.index({ 'availability.isAvailable': 1 });
 DriverSchema.index({ 'preferredRoute.area': 1 });
 DriverSchema.index({ currentRideStatus: 1 });

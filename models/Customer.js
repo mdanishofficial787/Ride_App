@@ -621,7 +621,7 @@ const CustomerSchema = new mongoose.Schema(
 // ============================================
 // INDEXES
 // ============================================
-CustomerSchema.index({ user: 1 });
+//CustomerSchema.index({ user: 1 });
 CustomerSchema.index({ accountStatus: 1 });
 CustomerSchema.index({ 'savedAddresses.location': '2dsphere' });
 

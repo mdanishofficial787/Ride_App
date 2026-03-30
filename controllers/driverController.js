@@ -89,21 +89,21 @@ exports.createDriverProfile = async (req, res) => {
             user: req.user.id,
             cnic,
             documents: {
-                driverImage: uploadedUrls.driverImage,
-                cnicFront: uploadedUrls.cnicFront,
-                cnicBack: uploadedUrls.cnicBack,
-                drivingLicenseFront: uploadedUrls.drivingLicenseFront,
-                drivingLicenseBack: uploadedUrls.drivingLicenseBack
+                driverImage: req.files.driverImage[0].path,  // Cloudinary URL
+                cnicFront: req.files.cnicFront[0].path,      // Cloudinary URL
+                cnicBack: req.files.cnicBack[0].path,
+                drivingLicenseFront: req.files.drivingLicenseFront[0].path,
+                drivingLicenseBack: req.files.drivingLicenseBack[0].path
             },
             vehicleType,
             vehicleLicenseNumber: vehicleLicenseNumber.toUpperCase(),
             vehicleRegistrationNumber: vehicleRegistrationNumber.toUpperCase(),
             vehicleDocuments: {
-                registrationDocument: uploadedUrls.registrationDocument,
-                vehicleFrontImage: uploadedUrls.vehicleFrontImage,
-                vehicleBackImage: uploadedUrls.vehicleBackImage,
-                vehicleLeftImage: uploadedUrls.vehicleLeftImage,
-                vehicleRightImage: uploadedUrls.vehicleRightImage
+                registrationDocument: req.files.registrationDocument[0].path,
+                vehicleFrontImage: req.files.vehicleFrontImage[0].path,
+                vehicleBackImage: req.files.vehicleBackImage[0].path,
+                vehicleLeftImage: req.files.vehicleLeftImage[0].path,
+                vehicleRightImage: req.files.vehicleRightImage[0].path
             },
             profileStatus: 'complete',
             verificationStatus: 'pending',

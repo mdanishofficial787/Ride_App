@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -9,7 +10,7 @@ const errorHandler = require('./middleware/errorHandler');
 dotenv.config({ path: './config/config.env' });
 
 // Initialize express app
-const app = express()
+const app = express();
 //connect to database
 connectDB();
 
@@ -63,6 +64,7 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/drivers', require('./routes/driverRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/customers', require('./routes/customerRoutes'));
+app.use('/api/schedules', require('./routes/scheduleRoutes')); 
 
 // serve upload files statically
 app.use('/uploads', express.static('uploads'));
